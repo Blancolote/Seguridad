@@ -25,6 +25,12 @@ type client struct {
 	currentDNI       string
 }
 
+type Observaciones struct {
+	Fecha_actualizacion string `json:"fecha_actualizacion"`
+	Diagnostico         string `json:"diagnostico"`
+	Medico              string `json:"medico"`
+}
+
 // Run es la única función exportada de este paquete.
 // Crea un client interno y ejecuta el bucle principal.
 func Run() {
@@ -192,13 +198,8 @@ func (c *client) verHistorialPaciente() {
 
 		switch choice {
 		case 1: // Crear expediente
-			c.crearExpediente(c.currentDNI)
+			c.crearExpediente()
 		case 2: // Elegir expediente
-			if len(listaExpedientes) == 0 {
-				fmt.Println("No hay expedientes para este paciente")
-				ui.Pause("Pulsa [Enter] para continuar...")
-				continue
-			}
 			c.elegirExpediente(c.currentDNI)
 		case 3: // Salir
 			return
@@ -207,20 +208,21 @@ func (c *client) verHistorialPaciente() {
 	}
 }
 
-func (c *client) crearExpediente(dni string) {
+func (c *client) crearExpediente() {
 	ui.ClearScreen()
 	fmt.Println("** Crear nuevo expediente **")
 
 	observaciones := ui.ReadInput("Observaciones: ")
 
+	fmt.Println("DNI:", c.currentDNI)
+
 	// Enviar solicitud al servidor
 	res := c.sendRequest(api.Request{
-		Action:        api.ActionCrearExpediente,
-		Token:         c.authToken,
-		Username:      c.currentUser,
-		Especialidad:  c.currentSpecialty, // Asumimos que esto está guardado desde el login
-		Observaciones: observaciones,
-		DNI:           c.currentDNI,
+		Action:      api.ActionCrearExpediente,
+		Token:       c.authToken,
+		Username:    c.currentUser,
+		Diagnostico: observaciones,
+		DNI:         c.currentDNI,
 	})
 
 	fmt.Println("Éxito:", res.Success)
@@ -244,18 +246,13 @@ func (c *client) elegirExpediente(dni string) {
 		return
 	}
 
-	if len(res.Expedientes) == 0 {
-		fmt.Println("No hay expedientes para este paciente")
-		return
-	}
-
 	// Parsear los expedientes
 	type Expediente struct {
-		ID            int    `json:"id"`
-		Username      string `json:"username"`
-		Observaciones string `json:"observaciones"`
-		FechaCreacion string `json:"fecha_creacion"`
-		Especialidad  int    `json:"especialidad"`
+		ID            int             `json:"id"`
+		Username      string          `json:"username"`
+		Observaciones []Observaciones `json:"observaciones"`
+		FechaCreacion string          `json:"fecha_creacion"`
+		Especialidad  int             `json:"especialidad"`
 	}
 
 	var listaExpedientes []Expediente
@@ -270,54 +267,51 @@ func (c *client) elegirExpediente(dni string) {
 
 	if len(listaExpedientes) == 0 {
 		fmt.Println("No se encontraron expedientes válidos")
-		return
-	}
+		ui.Pause("Pulsa [Enter] para continuar...")
 
-	// Mostrar menú de expedientes
-	for {
-		ui.ClearScreen()
-		fmt.Printf("Expedientes de %s:\n", dni)
-		options := make([]string, len(listaExpedientes))
-		for i, exp := range listaExpedientes {
-			obsPreview := exp.Observaciones
-			if len(obsPreview) > 20 {
-				obsPreview = obsPreview[:20] + "..."
+	} else {
+		for {
+			ui.ClearScreen()
+			fmt.Printf("Expedientes de %s:\n", dni)
+			options := make([]string, len(listaExpedientes))
+			for i, exp := range listaExpedientes {
+				options[i] = fmt.Sprintf("Fecha: %s - Observaciones: %s", exp.FechaCreacion, exp.Observaciones)
 			}
-			options[i] = fmt.Sprintf("%d. Fecha: %s - Observaciones: %s", exp.ID, exp.FechaCreacion, obsPreview)
+			options = append(options, "Volver")
+
+			choice := ui.PrintMenu("Seleccionar expediente", options)
+			if choice == len(options) {
+				return
+			}
+
+			selectedExp := listaExpedientes[choice-1]
+
+			// Submenú para el expediente seleccionado
+			ui.ClearScreen()
+			fmt.Printf("Expediente ID %d (Fecha: %s)\n", selectedExp.ID, selectedExp.FechaCreacion)
+			subOptions := []string{"Visualizar", "Editar", "Volver"}
+			subChoice := ui.PrintMenu("Opciones", subOptions)
+
+			switch subChoice {
+			case 1: // Visualizar
+				fmt.Println("Observaciones:", selectedExp.Observaciones)
+				fmt.Println("Creado por:", selectedExp.Username)
+				fmt.Println("Fecha creación:", selectedExp.FechaCreacion)
+				fmt.Println("Especialidad:", selectedExp.Especialidad)
+				ui.Pause("Pulsa [Enter] para continuar...")
+			case 2: // Editar
+				observaciones := ui.ReadInput("Nueva observación: ")
+				c.actualizarExpediente(choice-1, observaciones)
+			case 3: // Volver
+				continue
+			}
 		}
-		options = append(options, "Volver")
 
-		choice := ui.PrintMenu("Seleccionar expediente", options)
-		if choice == len(options) {
-			return
-		}
-
-		selectedExp := listaExpedientes[choice-1]
-
-		// Submenú para el expediente seleccionado
-		ui.ClearScreen()
-		fmt.Printf("Expediente ID %d (Fecha: %s)\n", selectedExp.ID, selectedExp.FechaCreacion)
-		subOptions := []string{"Visualizar", "Editar", "Volver"}
-		subChoice := ui.PrintMenu("Opciones", subOptions)
-
-		switch subChoice {
-		case 1: // Visualizar
-			fmt.Println("Observaciones:", selectedExp.Observaciones)
-			fmt.Println("Creado por:", selectedExp.Username)
-			fmt.Println("Fecha creación:", selectedExp.FechaCreacion)
-			fmt.Println("Especialidad:", selectedExp.Especialidad)
-			ui.Pause("Pulsa [Enter] para continuar...")
-		case 2: // Editar
-			observaciones := ui.ReadInput("Nueva observación: ")
-			c.actualizarExpediente(selectedExp.ID, observaciones)
-		case 3: // Volver
-			continue
-		}
 	}
 }
 
 // funcion Actualizar Expediente, se pasa como argumento el numero del expediente, el nombre, observaciones y token
-func (c *client) actualizarExpediente(expID, observaciones string) {
+func (c *client) actualizarExpediente(expID int, observaciones string) {
 	ui.ClearScreen()
 	fmt.Println("** Actualizar expediente **")
 
@@ -326,14 +320,42 @@ func (c *client) actualizarExpediente(expID, observaciones string) {
 
 	// Enviar la solicitud al servidor
 	res := c.sendRequest(api.Request{
-		Action:        api.ActionActualizarExpediente,
-		Token:         c.authToken,
-		ID:            expID,
-		Username:      c.currentUser,
-		Observaciones: observaciones,
-		Fecha:         fechaActual,
+		Action:      api.ActionModificarExpediente,
+		Token:       c.authToken,
+		ID:          expID,
+		Username:    c.currentUser,
+		Diagnostico: observaciones,
+		Fecha:       fechaActual,
 	})
 
+	fmt.Println("Éxito:", res.Success)
+	fmt.Println("Mensaje:", res.Message)
+}
+
+func (c *client) darAltaPaciente() {
+	ui.ClearScreen()
+	fmt.Println("** Dar de alta al paciente **")
+
+	nombre := ui.ReadInput("Nombre: ")
+	apellido := ui.ReadInput("Apellido: ")
+	fecha_nacimiento := ui.ReadInput("Fecha de nacimiento (AAAA-dd-mm): ")
+	dni := ui.ReadInput("DNI del paciente: ")
+	sexo := ui.ReadInput("Sexo (H,M,O)")
+
+	// Enviamos la acción al servidor
+	res := c.sendRequest(api.Request{
+		Action:   api.ActionDarAlta,
+		Token:    c.authToken,
+		Username: c.currentUser,
+		Nombre:   nombre,
+		Apellido: apellido,
+		Fecha:    fecha_nacimiento,
+		Sexo:     sexo,
+		DNI:      dni,
+		Hospital: c.currentHospital,
+	})
+
+	// Mostramos resultado
 	fmt.Println("Éxito:", res.Success)
 	fmt.Println("Mensaje:", res.Message)
 }
