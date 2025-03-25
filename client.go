@@ -19,7 +19,7 @@ import (
 type client struct {
 	log              *log.Logger
 	currentUser      string
-	authToken        string
+	authToken        api.Token
 	currentSpecialty int //nuevo
 	currentHospital  int //nuevo
 	currentDNI       string
@@ -159,7 +159,7 @@ func (c *client) loginUser() {
 	fmt.Println("Mensaje:", res.Message)
 
 	// Si login fue exitoso, guardamos currentUser y el token.
-	if res.Success {
+	if res.Success == 1 {
 		c.currentUser = username
 		c.authToken = res.Token
 		fmt.Println("Sesión iniciada con éxito. Token guardado.")
@@ -172,12 +172,18 @@ func (c *client) verHistorialPaciente() {
 
 	dni := ui.ReadInput("DNI del paciente: ")
 	res := c.sendRequest(api.Request{
-		Action: api.ActionObtenerExpedientes,
-		Token:  c.authToken,
-		DNI:    dni,
+		Action:   api.ActionObtenerExpedientes,
+		Username: c.currentUser,
+		Token:    c.authToken,
+		DNI:      dni,
 	})
 
-	if !res.Success {
+	if res.Success == 0 {
+		c.logoutUser()
+		return
+	}
+
+	if res.Success == -1 {
 		fmt.Println("Mensaje:", res.Message)
 		if ui.Confirm("¿Desea dar de alta al paciente? (s/n)") {
 			c.darAltaPaciente()
@@ -215,6 +221,9 @@ func (c *client) crearExpediente() {
 	observaciones := ui.ReadInput("Observaciones: ")
 
 	fmt.Println("DNI:", c.currentDNI)
+	fmt.Println(c.authToken.Value)
+	fmt.Println(c.currentUser)
+	fmt.Println(observaciones)
 
 	// Enviar solicitud al servidor
 	res := c.sendRequest(api.Request{
@@ -224,6 +233,11 @@ func (c *client) crearExpediente() {
 		Diagnostico: observaciones,
 		DNI:         c.currentDNI,
 	})
+
+	if res.Success == 0 {
+		c.logoutUser()
+		return
+	}
 
 	fmt.Println("Éxito:", res.Success)
 	fmt.Println("Mensaje:", res.Message)
@@ -241,14 +255,18 @@ func (c *client) elegirExpediente(dni string) {
 		DNI:    dni,
 	})
 
-	if !res.Success {
+	if res.Success == 0 {
+		c.logoutUser()
+		return
+	}
+
+	if res.Success == 1 {
 		fmt.Println("Mensaje:", res.Message)
 		return
 	}
 
 	// Parsear los expedientes
 	type Expediente struct {
-		ID            int             `json:"id"`
 		Username      string          `json:"username"`
 		Observaciones []Observaciones `json:"observaciones"`
 		FechaCreacion string          `json:"fecha_creacion"`
@@ -288,7 +306,7 @@ func (c *client) elegirExpediente(dni string) {
 
 			// Submenú para el expediente seleccionado
 			ui.ClearScreen()
-			fmt.Printf("Expediente ID %d (Fecha: %s)\n", selectedExp.ID, selectedExp.FechaCreacion)
+			fmt.Printf("Fecha: %s\n", selectedExp.FechaCreacion)
 			subOptions := []string{"Visualizar", "Editar", "Volver"}
 			subChoice := ui.PrintMenu("Opciones", subOptions)
 
@@ -328,6 +346,10 @@ func (c *client) actualizarExpediente(expID int, observaciones string) {
 		Fecha:       fechaActual,
 	})
 
+	if res.Success == 0 {
+		c.logoutUser()
+	}
+
 	fmt.Println("Éxito:", res.Success)
 	fmt.Println("Mensaje:", res.Message)
 }
@@ -355,6 +377,10 @@ func (c *client) darAltaPaciente() {
 		Hospital: c.currentHospital,
 	})
 
+	if res.Success == 0 {
+		c.logoutUser()
+	}
+
 	// Mostramos resultado
 	fmt.Println("Éxito:", res.Success)
 	fmt.Println("Mensaje:", res.Message)
@@ -367,7 +393,7 @@ func (c *client) fetchData() {
 	fmt.Println("** Obtener datos del usuario **")
 
 	// Chequeo básico de que haya sesión
-	if c.currentUser == "" || c.authToken == "" {
+	if c.currentUser == "" || c.authToken.Value == "" {
 		fmt.Println("No estás logueado. Inicia sesión primero.")
 		return
 	}
@@ -383,7 +409,7 @@ func (c *client) fetchData() {
 	fmt.Println("Mensaje:", res.Message)
 
 	// Si fue exitoso, mostramos la data recibida
-	if res.Success {
+	if res.Success == 1 {
 		fmt.Println("Tus datos:", res.Data)
 	}
 }
@@ -393,7 +419,7 @@ func (c *client) updateData() {
 	ui.ClearScreen()
 	fmt.Println("** Actualizar datos del usuario **")
 
-	if c.currentUser == "" || c.authToken == "" {
+	if c.currentUser == "" || c.authToken.Value == "" {
 		fmt.Println("No estás logueado. Inicia sesión primero.")
 		return
 	}
@@ -419,7 +445,7 @@ func (c *client) logoutUser() {
 	ui.ClearScreen()
 	fmt.Println("** Cerrar sesión **")
 
-	if c.currentUser == "" || c.authToken == "" {
+	if c.currentUser == "" || c.authToken.Value == "" {
 		fmt.Println("No estás logueado.")
 		return
 	}
@@ -435,9 +461,9 @@ func (c *client) logoutUser() {
 	fmt.Println("Mensaje:", res.Message)
 
 	// Si fue exitoso, limpiamos la sesión local.
-	if res.Success {
+	if res.Success == 1 {
 		c.currentUser = ""
-		c.authToken = ""
+		c.authToken = api.Token{}
 	}
 }
 
@@ -448,7 +474,7 @@ func (c *client) sendRequest(req api.Request) api.Response {
 	resp, err := http.Post("http://localhost:8080/api", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Println("Error al contactar con el servidor:", err)
-		return api.Response{Success: false, Message: "Error de conexión"}
+		return api.Response{Success: -1, Message: "Error de conexión"}
 	}
 	defer resp.Body.Close()
 
